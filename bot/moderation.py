@@ -5,7 +5,13 @@ from datetime import datetime, timezone, timedelta
 from telegram import Update, ChatPermissions
 from telegram.ext import ContextTypes
 
-from bot.database import add_warning, clear_warnings, get_group_config
+from bot.database import (
+    add_warning,
+    clear_warnings,
+    get_group_config,
+    record_ban,
+    record_unban,
+)
 from bot.helpers import (
     resolve_target_user,
     parse_duration,
@@ -30,9 +36,20 @@ async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     args = update.message.text.split()[1:]
     reason = " ".join(args[1:]) if len(args) > 1 else "No reason provided."
+    chat_id = update.effective_chat.id
+    banned_by = update.effective_user.id
 
     try:
-        await context.bot.ban_chat_member(update.effective_chat.id, user_id)
+        chat_member = await context.bot.get_chat_member(chat_id, user_id)
+        user = chat_member.user
+        await context.bot.ban_chat_member(chat_id, user_id)
+        await record_ban(
+            chat_id, user_id,
+            username=user.username or "",
+            full_name=user.full_name or "",
+            reason=reason,
+            banned_by_id=banned_by,
+        )
         await update.message.reply_html(
             f"🔨 Banned {mention}.\n<b>Reason:</b> {reason}"
         )
@@ -51,10 +68,10 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Reply to a message or provide @username / user_id.")
         return
 
+    chat_id = update.effective_chat.id
     try:
-        await context.bot.unban_chat_member(
-            update.effective_chat.id, user_id, only_if_banned=True
-        )
+        await context.bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
+        await record_unban(chat_id, user_id)
         await update.message.reply_html(f"✅ Unbanned {mention}.")
     except Exception as e:
         await update.message.reply_text(f"Failed to unban: {e}")
@@ -179,7 +196,16 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if count >= warn_limit:
         try:
+            chat_member = await context.bot.get_chat_member(chat_id, user_id)
+            user = chat_member.user
             await context.bot.ban_chat_member(chat_id, user_id)
+            await record_ban(
+                chat_id, user_id,
+                username=user.username or "",
+                full_name=user.full_name or "",
+                reason=f"Auto-banned: reached {warn_limit} warnings",
+                banned_by_id=context.bot.id,
+            )
             await update.message.reply_html(
                 f"🔨 {mention} has been <b>auto-banned</b> for reaching {warn_limit} warnings."
             )

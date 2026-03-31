@@ -1,7 +1,7 @@
 """Bot application setup — registers all handlers."""
 import logging
 
-from telegram import Update
+from telegram import Update, Chat
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 
 from bot.config import TELEGRAM_BOT_TOKEN
-from bot.database import init_db
+from bot.database import init_db, ensure_group, update_group_name
 from bot.moderation import (
     ban_command,
     clearwarnings_command,
@@ -69,6 +69,16 @@ async def post_init(application: Application):
     logger.info("Database initialised.")
 
 
+async def track_group_handler(update: Update, context):
+    """Silently keep group name up to date whenever any group message arrives."""
+    chat = update.effective_chat
+    if chat and chat.type in (Chat.GROUP, Chat.SUPERGROUP):
+        name = chat.title or ""
+        await ensure_group(chat.id, group_name=name)
+        if name:
+            await update_group_name(chat.id, name)
+
+
 def build_application() -> Application:
     app = (
         Application.builder()
@@ -78,14 +88,24 @@ def build_application() -> Application:
     )
 
     group_filter = filters.ChatType.GROUPS
+    private_filter = filters.ChatType.PRIVATE
 
-    # ── User commands (all chats) ──────────────────────────────────────────
+    # ── Group name tracker (highest priority, runs on every group message) ──
+    app.add_handler(
+        MessageHandler(group_filter, track_group_handler),
+        group=-1,
+    )
+
+    # ── User commands ──────────────────────────────────────────────────────
+    # /start and /help: allowed in all chats (show group-only info in private)
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("rules", rules_command))
+    # /rules: group only (makes no sense in private)
+    app.add_handler(CommandHandler("rules", rules_command, filters=group_filter))
+    # /info: all chats — behaviour differs based on chat type (see user_commands.py)
     app.add_handler(CommandHandler("info", info_command))
 
-    # ── Moderation (groups) ────────────────────────────────────────────────
+    # ── Moderation (groups + admins only) ─────────────────────────────────
     app.add_handler(CommandHandler("ban", ban_command, filters=group_filter))
     app.add_handler(CommandHandler("unban", unban_command, filters=group_filter))
     app.add_handler(CommandHandler("kick", kick_command, filters=group_filter))
@@ -99,7 +119,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("promote", promote_command, filters=group_filter))
     app.add_handler(CommandHandler("demote", demote_command, filters=group_filter))
 
-    # ── Config commands (groups) ───────────────────────────────────────────
+    # ── Config commands (groups + admins only) ─────────────────────────────
     app.add_handler(CommandHandler("setwelcome", setwelcome_command, filters=group_filter))
     app.add_handler(CommandHandler("setfarewell", setfarewell_command, filters=group_filter))
     app.add_handler(CommandHandler("setrules", setrules_command, filters=group_filter))
@@ -110,6 +130,16 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("antispam", antispam_command, filters=group_filter))
     app.add_handler(CommandHandler("captcha", captcha_command, filters=group_filter))
 
+    # ── Private chat: silently ignore any other commands ──────────────────
+    async def private_unknown(update: Update, context):
+        await update.message.reply_html(
+            "ℹ️ I only work in groups. You can use /info to view your Telegram details, "
+            "or /start for more information."
+        )
+    app.add_handler(
+        MessageHandler(private_filter & filters.COMMAND, private_unknown)
+    )
+
     # ── Member events ──────────────────────────────────────────────────────
     app.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS & group_filter, new_member_handler)
@@ -117,6 +147,7 @@ def build_application() -> Application:
     app.add_handler(
         MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER & group_filter, left_member_handler)
     )
+
     # ── Auto-delete Telegram service messages ──────────────────────────────
     service_updates = (
         filters.StatusUpdate.PINNED_MESSAGE

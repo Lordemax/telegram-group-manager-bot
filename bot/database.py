@@ -7,6 +7,7 @@ async def init_db():
         await db.execute("""
             CREATE TABLE IF NOT EXISTS group_config (
                 chat_id INTEGER PRIMARY KEY,
+                group_name TEXT DEFAULT '',
                 welcome_msg TEXT DEFAULT 'Welcome {first_name} to {group_name}!',
                 farewell_msg TEXT DEFAULT 'Goodbye {first_name}!',
                 rules TEXT DEFAULT 'No rules set yet.',
@@ -16,6 +17,11 @@ async def init_db():
                 captcha INTEGER DEFAULT 0
             )
         """)
+        # migrate: add group_name if upgrading from old schema
+        try:
+            await db.execute("ALTER TABLE group_config ADD COLUMN group_name TEXT DEFAULT ''")
+        except Exception:
+            pass
         await db.execute("""
             CREATE TABLE IF NOT EXISTS warnings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,14 +47,41 @@ async def init_db():
                 PRIMARY KEY (chat_id, user_id)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS bans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                username TEXT DEFAULT '',
+                full_name TEXT DEFAULT '',
+                reason TEXT DEFAULT '',
+                banned_by_id INTEGER,
+                banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(chat_id, user_id)
+            )
+        """)
         await db.commit()
 
 
-async def ensure_group(chat_id: int):
+async def ensure_group(chat_id: int, group_name: str = ""):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT OR IGNORE INTO group_config (chat_id) VALUES (?)",
-            (chat_id,)
+            "INSERT OR IGNORE INTO group_config (chat_id, group_name) VALUES (?, ?)",
+            (chat_id, group_name)
+        )
+        if group_name:
+            await db.execute(
+                "UPDATE group_config SET group_name = ? WHERE chat_id = ? AND (group_name IS NULL OR group_name = '')",
+                (group_name, chat_id)
+            )
+        await db.commit()
+
+
+async def update_group_name(chat_id: int, group_name: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE group_config SET group_name = ? WHERE chat_id = ?",
+            (group_name, chat_id)
         )
         await db.commit()
 
@@ -65,6 +98,7 @@ async def get_group_config(chat_id: int) -> dict:
 
 
 _ALLOWED_GROUP_FIELDS = frozenset({
+    "group_name",
     "welcome_msg",
     "farewell_msg",
     "rules",
@@ -182,3 +216,45 @@ async def get_user_first_seen(chat_id: int, user_id: int):
         ) as cursor:
             row = await cursor.fetchone()
             return row[0] if row else None
+
+
+async def record_ban(
+    chat_id: int,
+    user_id: int,
+    username: str = "",
+    full_name: str = "",
+    reason: str = "",
+    banned_by_id: int | None = None,
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO bans (chat_id, user_id, username, full_name, reason, banned_by_id)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                 username=excluded.username,
+                 full_name=excluded.full_name,
+                 reason=excluded.reason,
+                 banned_by_id=excluded.banned_by_id,
+                 banned_at=CURRENT_TIMESTAMP""",
+            (chat_id, user_id, username, full_name, reason, banned_by_id)
+        )
+        await db.commit()
+
+
+async def record_unban(chat_id: int, user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM bans WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id)
+        )
+        await db.commit()
+
+
+async def get_bans(chat_id: int) -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM bans WHERE chat_id = ? ORDER BY banned_at DESC",
+            (chat_id,)
+        ) as cursor:
+            return [dict(r) for r in await cursor.fetchall()]
