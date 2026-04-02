@@ -1,94 +1,41 @@
 # Telegram Group Management Bot
 
-A full-featured Telegram group management bot built with **python-telegram-bot v21** (async).
+Standalone Telegram group admin bot built with `python-telegram-bot` v21 and SQLite via `aiosqlite`.
 
 ## Features
 
-### Admin Commands (group admins only)
-| Command | Description |
-|---|---|
-| `/ban @user [reason]` | Permanently ban a user |
-| `/unban @user` | Unban a user |
-| `/kick @user` | Kick a user (ban + immediate unban) |
-| `/mute @user [duration]` | Mute a user. Duration: `10m`, `2h`, `1d` |
-| `/unmute @user` | Unmute a user |
-| `/warn @user [reason]` | Issue a warning (auto-bans at limit) |
-| `/warnings [@user]` | Show warning count |
-| `/clearwarnings @user` | Reset warnings |
-| `/pin` | Pin the replied-to message |
-| `/unpin` | Unpin current message |
-| `/promote @user` | Make user an admin |
-| `/demote @user` | Remove admin rights |
-
-### User Commands (everyone)
-| Command | Description |
-|---|---|
-| `/start` | Introduction |
-| `/help` | Full command list |
-| `/rules` | Show group rules |
-| `/info [@user]` | Show user info & warnings |
-
-### Config Commands (admins)
-| Command | Description |
-|---|---|
-| `/setwelcome <msg>` | Set custom welcome message |
-| `/setfarewell <msg>` | Set custom farewell message |
-| `/setrules <text>` | Set group rules |
-| `/addfilter <word>` | Add word to bad-word filter |
-| `/removefilter <word>` | Remove word from filter |
-| `/listfilters` | List filtered words |
-| `/setflood <n>` | Set flood limit (messages per 5s) |
-| `/antispam on\|off` | Toggle anti-spam module |
-| `/captcha on\|off` | Toggle join CAPTCHA |
-
-### Automated Features
-- **Welcome/farewell messages** with `{first_name}`, `{username}`, `{group_name}` placeholders
-- **Anti-spam / flood detection** — auto-mutes + warns heavy spammers
-- **Bad-word filter** — deletes messages and warns users
-- **Join CAPTCHA** — inline button challenge, auto-kicks if not clicked within 60s
-- **Auto-ban** when warning threshold is reached (default 3)
-
----
+- Admin moderation: `/kick`, `/ban`, `/unban`, `/mute`, `/unmute`, `/warn`, `/warnings`, `/clearwarnings`, `/pin`, `/unpin`, `/promote`, `/demote`
+- User commands: `/start`, `/help`, `/rules`, `/info`
+- Automated moderation: welcome/farewell messages, flood-spam detection, bad-word filtering, service message cleanup, CAPTCHA onboarding, join-rate alerts
+- Join gating: require new members to join listed channels before they can speak in the group
+- Screening: first-message delay for new joins, duplicate-message detection, and `/screening on|off`
+- Monitoring and maintenance: `/modlog`, `/summary`, `/setsummaryhour`, `/health`, `/exportdata`, admin alert routing, raid mode, and link/domain controls
+- Group configuration: `/setwelcome`, `/setfarewell`, `/setrules`, `/addfilter`, `/removefilter`, `/setflood`, `/antispam on|off`, `/captcha on|off`, `/raid on|off`, `/screening on|off`, `/setfirstmessagedelay`, `/setduplicatethreshold`, `/setduplicatewindow`, `/links on|off`, `/allowdomain`, `/blockdomain`, `/removedomain`, `/addrequiredchannel`, `/removerequiredchannel`, `/requiredchannels`, `/setalertchat`
+- Persistence with a local SQLite database in `artifacts/telegram-bot/data/`
 
 ## Setup
 
-### 1. Create a bot on Telegram
-1. Open [@BotFather](https://t.me/BotFather) on Telegram
-2. Send `/newbot` and follow the prompts
-3. Copy the **Bot Token** you receive
+1. Create a bot with `@BotFather` and copy the token.
+2. Copy `.env.example` to `.env`.
+3. Set `TELEGRAM_BOT_TOKEN` in `.env`.
+4. Install dependencies and run the bot:
 
-### 2. Add the token as a secret
-In Replit, go to **Secrets** (the lock icon) and add:
+```bash
+cd artifacts/telegram-bot
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+python run.py
 ```
-TELEGRAM_BOT_TOKEN = <your token here>
-```
 
-### 3. Start the bot
-Click **Run** in Replit. The workflow `Telegram Bot` will execute `python run.py`.
+## Notes
 
-### 4. Add the bot to your group
-1. Add the bot to your Telegram group
-2. Grant it **Admin** rights (at minimum: delete messages, ban users, restrict members, pin messages)
-3. The bot will start responding to commands immediately
-
----
-
-## Data Storage
-All data (warnings, config, bad-word lists) is stored in a local SQLite database file `bot_data.db` in the project directory. No external database required.
-
-## Architecture
-```
-artifacts/telegram-bot/
-├── run.py              # Entry point
-├── requirements.txt    # Python dependencies
-├── bot/
-│   ├── config.py       # Config & env vars
-│   ├── database.py     # SQLite helpers (aiosqlite)
-│   ├── helpers.py      # Permission checks, arg parsing
-│   ├── main.py         # Application setup & handler registration
-│   ├── moderation.py   # Admin moderation commands
-│   ├── user_commands.py # Public user commands
-│   ├── welcome.py      # Welcome/farewell & CAPTCHA
-│   ├── antispam.py     # Flood control & bad-word filter
-│   └── config_commands.py # Per-group config commands
-```
+- `TELEGRAM_BOT_TOKEN` is required or startup will fail immediately.
+- Moderation commands are restricted to Telegram group admins.
+- Commands target users by reply, known `@username`, or numeric Telegram user ID.
+- Warnings auto-ban after the configured limit, which defaults to `3`.
+- CAPTCHA challenges expire after `60` seconds by default and remove unverified users.
+- `/setsummaryhour 9` schedules a daily summary at 09:00 in `TELEGRAM_BOT_TIMEZONE`.
+- `/setalertchat` defaults to the current chat when no chat ID is supplied.
+- Required channel checks work best with public channels such as `@channelname`, and the bot must be able to read membership for those channels.
+- Screening mode uses the member's stored join time to enforce the first-message delay and audit log duplicate-message blocks.

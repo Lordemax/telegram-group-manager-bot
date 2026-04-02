@@ -1,5 +1,6 @@
-*.db
+.env
 __pycache__/
 *.pyc
-*.pyo
-.env
+data/
+bot.stdout.log
+bot.stderr.log
